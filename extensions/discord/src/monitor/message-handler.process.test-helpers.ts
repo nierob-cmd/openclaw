@@ -15,7 +15,11 @@ type AutomaticSourceDeliveryOverrides = Parameters<typeof createAutomaticSourceD
 export async function createProgressDraftSourceDeliveryContext(
   overrides: AutomaticSourceDeliveryOverrides = {},
 ) {
-  const cfg = overrides.cfg ?? {};
+  const cfg = (overrides.cfg ?? {}) as {
+    messages?: {
+      statusReactions?: Record<string, unknown>;
+    } & Record<string, unknown>;
+  } & Record<string, unknown>;
   return await createAutomaticSourceDeliveryContext({
     ...overrides,
     cfg: {
