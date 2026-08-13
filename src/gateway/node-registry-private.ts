@@ -131,6 +131,7 @@ type NodeRegistryPrivateState = {
   context: NodeRegistryPrivateContext;
   runnerInventoryByConn: Map<string, NodeRunnerInventoryRecord>;
   generationBoundInvokes: WeakMap<PendingInvoke, GenerationBoundPendingInvoke>;
+  publishRunnerInventoryChanged: (nodeId: string) => void;
   invokeCore: (params: NodeInvokeParams, allowPrivateCommand: boolean) => Promise<NodeInvokeResult>;
   updateRunnerInventory: (params: {
     nodeId: string;
@@ -271,6 +272,7 @@ function updateWorkerRunnerInventory(
     const changed = state.runnerInventoryByConn.delete(node.connId);
     if (changed) {
       state.context.publishActiveNodeContext();
+      state.publishRunnerInventoryChanged(node.nodeId);
     }
     return { changed };
   }
@@ -293,6 +295,7 @@ function updateWorkerRunnerInventory(
   if (changed) {
     state.runnerInventoryByConn.set(node.connId, next);
     state.context.publishActiveNodeContext();
+    state.publishRunnerInventoryChanged(node.nodeId);
   }
   return { changed };
 }
@@ -462,6 +465,7 @@ export function registerNodeRegistryPrivateRuntime(
   state.context = context;
   state.runnerInventoryByConn = new Map();
   state.generationBoundInvokes = new WeakMap();
+  state.publishRunnerInventoryChanged = () => {};
   state.invokeCore = async (params, allowPrivateCommand) =>
     await invokeNodeRegistryCore(state, params, allowPrivateCommand);
   state.updateRunnerInventory = (params) => updateWorkerRunnerInventory(state, params);
@@ -528,6 +532,17 @@ export function createNodeRegistryRuntime<TRegistry extends object>(
   };
 }
 
+export function setNodeRunnerInventoryChangedListener(
+  nodeRegistry: object,
+  listener: (nodeId: string) => void,
+): void {
+  const state = NODE_REGISTRY_PRIVATE_STATES.get(nodeRegistry);
+  if (!state) {
+    throw new Error("node registry private runtime was not initialized");
+  }
+  state.publishRunnerInventoryChanged = listener;
+}
+
 export function invokePublicNodeRegistry(
   nodeRegistry: object,
   params: NodeInvokeParams,
@@ -555,7 +570,12 @@ export function updateNodeRunnerInventory(params: {
 }
 
 export function forgetNodeRunnerInventory(nodeRegistry: object, connId: string): void {
-  NODE_REGISTRY_PRIVATE_STATES.get(nodeRegistry)?.runnerInventoryByConn.delete(connId);
+  const state = NODE_REGISTRY_PRIVATE_STATES.get(nodeRegistry);
+  const declaration = state?.runnerInventoryByConn.get(connId);
+  if (!state || !declaration || !state.runnerInventoryByConn.delete(connId)) {
+    return;
+  }
+  state.publishRunnerInventoryChanged(declaration.nodeId);
 }
 
 export function isNodeRunnerSessionHost(params: {
