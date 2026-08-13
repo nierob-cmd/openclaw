@@ -207,6 +207,21 @@ Isolation on node runners: optional worker-in-docker/podman, same sandbox
 axis as gateway-local sessions. Cloud leases keep full-permission-within-the-
 box (the machine is the boundary).
 
+Milestone 6 now has the public worker ingress, transport-neutral launch
+descriptor, durable node-host supervisor, private launch/status/cancel dialect,
+bounded terminal receipts, and the Gateway launch replay/poll/cancel adapter.
+A node publishes one atomic, reconnect-scoped private runner inventory: the
+supervisor dialect plus an optional exact worker build handshake. Public node
+and environment projections expose only `sessionHost`; a read-scoped topology
+invalidation makes clients refetch those projections without exposing the build.
+Provider eligibility and new launch selection require the exact semantic
+handshake, while status and cancellation reacquire only the current supervisor
+proof and use the durable launch identity so an upgrade cannot strand an existing
+worker. Current node hosts intentionally publish no worker build and therefore
+remain non-hosts until milestone 7 installs and advertises a real gateway-
+namespaced bundle. Slots, isolation, checkouts, workspace transfer, and
+persistent-runner lifecycle remain milestone 6 work.
+
 ### Trust model (operator-decided, v1)
 
 Cloud workers run full-permission because the box is disposable and

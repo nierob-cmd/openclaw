@@ -1,62 +1,138 @@
 import { expectDefined } from "@openclaw/normalization-core";
 import { describe, expect, it, vi } from "vitest";
-import { NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE } from "../../infra/node-worker-supervisor-dialect.js";
+import { WORKER_PROTOCOL_FEATURES } from "../../../packages/gateway-protocol/src/schema/worker-admission.js";
+import { NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE } from "../../infra/node-runner-inventory.js";
+import { GATEWAY_EVENT_NODE_RUNNER_INVENTORY_CHANGED } from "../events.js";
 import { createNodeRegistryRuntime } from "../node-registry-private.js";
 import { NodeRegistry } from "../node-registry.js";
 import type { GatewayWsClient } from "../server/ws-types.js";
 import { nodeHandlers } from "./nodes.js";
-import { createWorkerSupervisorNodeClient } from "./nodes.protocol-features.test-support.js";
+import { createWorkerSupervisorNodeClient } from "./nodes.runner-inventory.test-support.js";
 import type { GatewayRequestHandlerOptions } from "./types.js";
 
-function protocolFeatureOptions(params: {
+const WORKER_RUNS = {
+  bundleHash: "a".repeat(64),
+  openclawVersion: "2026.8.1",
+  protocolFeatures: [...WORKER_PROTOCOL_FEATURES],
+};
+
+function runnerInventoryOptions(params: {
   nodeRegistry: NodeRegistry;
   client: GatewayWsClient;
-  protocolFeatures: unknown;
+  declaration: unknown;
 }): GatewayRequestHandlerOptions {
   return {
     req: {
       type: "req",
       id: "req-1",
-      method: "node.protocolFeatures.update",
-      params: params.protocolFeatures,
+      method: "node.runnerInventory.update",
+      params: params.declaration,
     },
-    params: params.protocolFeatures,
+    params: params.declaration,
     client: params.client as never,
     isWebchatConnect: () => false,
     respond: vi.fn(),
-    context: { nodeRegistry: params.nodeRegistry },
+    context: { nodeRegistry: params.nodeRegistry, broadcast: vi.fn() },
   } as unknown as GatewayRequestHandlerOptions;
 }
 
-const protocolFeatureHandler = expectDefined(
-  nodeHandlers["node.protocolFeatures.update"],
-  'nodeHandlers["node.protocolFeatures.update"] test invariant',
+const runnerInventoryHandler = expectDefined(
+  nodeHandlers["node.runnerInventory.update"],
+  'nodeHandlers["node.runnerInventory.update"] test invariant',
 );
 
-describe("nodeHandlers node.protocolFeatures.update", () => {
-  it("publishes the closed worker dialect for the exact authenticated node session", async () => {
+describe("nodeHandlers node.runnerInventory.update", () => {
+  it("publishes the atomic runner inventory for the exact authenticated node session", async () => {
     const runtime = createNodeRegistryRuntime(() => new NodeRegistry());
     const client = createWorkerSupervisorNodeClient();
     runtime.nodeRegistry.register(client, {
       pairingIdentity: "identity-1",
       pairingGeneration: "generation-1",
     });
-    const opts = protocolFeatureOptions({
+    const opts = runnerInventoryOptions({
       nodeRegistry: runtime.nodeRegistry,
       client,
-      protocolFeatures: { protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE] },
+      declaration: {
+        protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE],
+        workerRuns: WORKER_RUNS,
+      },
     });
 
-    await protocolFeatureHandler(opts);
+    await runnerInventoryHandler(opts);
 
     expect(opts.respond).toHaveBeenCalledWith(true, { nodeId: "node-1" }, undefined);
+    expect(opts.context.broadcast).toHaveBeenCalledWith(
+      GATEWAY_EVENT_NODE_RUNNER_INVENTORY_CHANGED,
+      { nodeId: "node-1" },
+      { dropIfSlow: true },
+    );
     await expect(runtime.nodeWorkerSupervisorTransport.listCurrentNodes()).resolves.toEqual([
       expect.objectContaining({
         nodeId: "node-1",
         connId: "conn-1",
         pairingGeneration: "generation-1",
+        workerRuns: WORKER_RUNS,
       }),
     ]);
+    runtime.nodeRegistry.unregister("conn-1");
+  });
+
+  it("atomically withdraws worker hosting without dropping the supervisor dialect", async () => {
+    const runtime = createNodeRegistryRuntime(() => new NodeRegistry());
+    const client = createWorkerSupervisorNodeClient();
+    runtime.nodeRegistry.register(client, {
+      pairingIdentity: "identity-1",
+      pairingGeneration: "generation-1",
+    });
+    const publish = async (declaration: unknown) => {
+      const opts = runnerInventoryOptions({
+        nodeRegistry: runtime.nodeRegistry,
+        client,
+        declaration,
+      });
+      await runnerInventoryHandler(opts);
+      expect(opts.respond).toHaveBeenCalledWith(true, { nodeId: "node-1" }, undefined);
+    };
+
+    await publish({
+      protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE],
+      workerRuns: WORKER_RUNS,
+    });
+    await publish({ protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE] });
+
+    await expect(runtime.nodeWorkerSupervisorTransport.listCurrentNodes()).resolves.toEqual([
+      expect.not.objectContaining({ workerRuns: expect.anything() }),
+    ]);
+    runtime.nodeRegistry.unregister("conn-1");
+  });
+
+  it("does not broadcast an identical inventory publication", async () => {
+    const runtime = createNodeRegistryRuntime(() => new NodeRegistry());
+    const client = createWorkerSupervisorNodeClient();
+    runtime.nodeRegistry.register(client, {
+      pairingIdentity: "identity-1",
+      pairingGeneration: "generation-1",
+    });
+    const declaration = {
+      protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE],
+      workerRuns: WORKER_RUNS,
+    };
+    const first = runnerInventoryOptions({
+      nodeRegistry: runtime.nodeRegistry,
+      client,
+      declaration,
+    });
+    const second = runnerInventoryOptions({
+      nodeRegistry: runtime.nodeRegistry,
+      client,
+      declaration,
+    });
+
+    await runnerInventoryHandler(first);
+    await runnerInventoryHandler(second);
+
+    expect(first.context.broadcast).toHaveBeenCalledOnce();
+    expect(second.context.broadcast).not.toHaveBeenCalled();
     runtime.nodeRegistry.unregister("conn-1");
   });
 
@@ -64,13 +140,13 @@ describe("nodeHandlers node.protocolFeatures.update", () => {
     const runtime = createNodeRegistryRuntime(() => new NodeRegistry());
     const client = createWorkerSupervisorNodeClient();
     runtime.nodeRegistry.register(client, { pairingIdentity: "identity-1" });
-    const opts = protocolFeatureOptions({
+    const opts = runnerInventoryOptions({
       nodeRegistry: runtime.nodeRegistry,
       client,
-      protocolFeatures: { protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE] },
+      declaration: { protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE] },
     });
 
-    await protocolFeatureHandler(opts);
+    await runnerInventoryHandler(opts);
     expect(opts.respond).toHaveBeenCalledWith(true, { nodeId: "node-1" }, undefined);
     await expect(runtime.nodeWorkerSupervisorTransport.listCurrentNodes()).resolves.toEqual([]);
 
@@ -105,6 +181,17 @@ describe("nodeHandlers node.protocolFeatures.update", () => {
       },
     },
     { name: "wrong dialect", params: { protocolFeatures: ["node-worker-supervisor-v2"] } },
+    {
+      name: "worker build without dialect",
+      params: { protocolFeatures: [], workerRuns: WORKER_RUNS },
+    },
+    {
+      name: "invalid worker build",
+      params: {
+        protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE],
+        workerRuns: { ...WORKER_RUNS, bundleHash: "not-a-hash" },
+      },
+    },
   ])("rejects $name without changing private eligibility", async ({ params }) => {
     const runtime = createNodeRegistryRuntime(() => new NodeRegistry());
     const client = createWorkerSupervisorNodeClient();
@@ -112,13 +199,13 @@ describe("nodeHandlers node.protocolFeatures.update", () => {
       pairingIdentity: "identity-1",
       pairingGeneration: "generation-1",
     });
-    const opts = protocolFeatureOptions({
+    const opts = runnerInventoryOptions({
       nodeRegistry: runtime.nodeRegistry,
       client,
-      protocolFeatures: params,
+      declaration: params,
     });
 
-    await protocolFeatureHandler(opts);
+    await runnerInventoryHandler(opts);
 
     expect(opts.respond).toHaveBeenCalledWith(
       false,
@@ -137,13 +224,13 @@ describe("nodeHandlers node.protocolFeatures.update", () => {
       pairingGeneration: "generation-1",
     });
     const stale = createWorkerSupervisorNodeClient("conn-stale");
-    const opts = protocolFeatureOptions({
+    const opts = runnerInventoryOptions({
       nodeRegistry: runtime.nodeRegistry,
       client: stale,
-      protocolFeatures: { protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE] },
+      declaration: { protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE] },
     });
 
-    await protocolFeatureHandler(opts);
+    await runnerInventoryHandler(opts);
 
     expect(opts.respond).toHaveBeenCalledWith(
       false,

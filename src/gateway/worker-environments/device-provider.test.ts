@@ -3,8 +3,9 @@ import {
   GATEWAY_CLIENT_IDS,
   GATEWAY_CLIENT_MODES,
 } from "../../../packages/gateway-protocol/src/client-info.js";
+import { WORKER_PROTOCOL_FEATURES } from "../../../packages/gateway-protocol/src/schema/worker-admission.js";
 import type { PairedDevice } from "../../infra/device-pairing.types.js";
-import { NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE } from "../../infra/node-worker-supervisor-dialect.js";
+import { NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE } from "../../infra/node-runner-inventory.js";
 import { WorkerProviderError } from "../../plugins/types.js";
 import type { NodeWorkerSupervisorNodeProof } from "../node-registry-private.js";
 import { createDeviceWorkerRuntime } from "./device-provider.js";
@@ -33,6 +34,7 @@ function pairedDevice(deviceId = DEVICE_ID): PairedDevice {
 function connectedNode(
   deviceId = DEVICE_ID,
   commands: readonly string[] = ["system.run"],
+  workerRuns = true,
 ): NodeWorkerSupervisorNodeProof {
   return {
     nodeId: deviceId,
@@ -42,6 +44,15 @@ function connectedNode(
     clientId: GATEWAY_CLIENT_IDS.NODE_HOST,
     clientMode: GATEWAY_CLIENT_MODES.NODE,
     protocolFeature: NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE,
+    ...(workerRuns
+      ? {
+          workerRuns: {
+            bundleHash: "a".repeat(64),
+            openclawVersion: "2026.8.1",
+            protocolFeatures: [...WORKER_PROTOCOL_FEATURES],
+          },
+        }
+      : {}),
     commands,
   };
 }
@@ -92,9 +103,9 @@ describe("device worker provider", () => {
       listCurrentNodes: async () => [],
     },
     {
-      name: "connected node without session execution",
+      name: "connected node without a worker build",
       getPairedDevice: async () => pairedDevice(),
-      listCurrentNodes: async () => [connectedNode(DEVICE_ID, [])],
+      listCurrentNodes: async () => [connectedNode(DEVICE_ID, ["system.run"], false)],
     },
   ])("rejects $name during provision", async ({ getPairedDevice, listCurrentNodes }) => {
     const provider = deviceRuntime({ getPairedDevice, listCurrentNodes }).provider;

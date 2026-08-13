@@ -3,9 +3,9 @@ import { beforeEach, describe, expect, it, type Mock, vi } from "vitest";
 import { ConnectErrorDetailCodes } from "../../packages/gateway-protocol/src/connect-error-details.js";
 import type { GatewayClientOptions } from "../gateway/client.js";
 import {
-  NODE_PROTOCOL_FEATURES_UPDATE_METHOD,
+  NODE_RUNNER_INVENTORY_UPDATE_METHOD,
   NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE,
-} from "../infra/node-worker-supervisor-dialect.js";
+} from "../infra/node-runner-inventory.js";
 import type { configureNodeHost } from "./config.js";
 import { startNodeHostMcpManager, type NodeHostMcpManager } from "./mcp.js";
 import { runNodeHost } from "./runner.js";
@@ -644,7 +644,7 @@ describe("runNodeHost", () => {
         },
       ],
     });
-    expect(client?.request).toHaveBeenCalledWith(NODE_PROTOCOL_FEATURES_UPDATE_METHOD, {
+    expect(client?.request).toHaveBeenCalledWith(NODE_RUNNER_INVENTORY_UPDATE_METHOD, {
       protocolFeatures: [NODE_WORKER_SUPERVISOR_PROTOCOL_FEATURE],
     });
   });
