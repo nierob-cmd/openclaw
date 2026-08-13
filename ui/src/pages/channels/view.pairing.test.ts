@@ -1,6 +1,6 @@
 /* @vitest-environment jsdom */
 import { render } from "lit";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   renderChannelPairingDetail,
   renderChannelPairingPrompt,
@@ -113,6 +113,10 @@ function renderInto(template: unknown): HTMLDivElement {
   render(template as never, container);
   return container;
 }
+
+afterEach(() => {
+  document.body.replaceChildren();
+});
 
 describe("channel DM access request views", () => {
   it("renders pending senders without exposing the pairing code", () => {
