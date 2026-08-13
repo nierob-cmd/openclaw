@@ -5,11 +5,14 @@ import {
   mimeTypeFromFilePath,
   normalizeMimeType,
 } from "@openclaw/media-core/mime";
-import {
-  asFiniteNumberInRange,
-  asPositiveSafeInteger as normalizePositiveInteger,
-} from "@openclaw/normalization-core/number-coercion";
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import {
+  isMeaningfulPersistedMediaFact,
+  normalizePersistedMediaFact,
+  normalizePersistedMediaFacts,
+  readCanonicalPersistedMediaFacts,
+  readPersistedMediaFactInputs,
+} from "./persisted-media-facts.js";
 import type { PromptImageOrderEntry } from "./prompt-image-order.js";
 
 /** One ordered runtime attachment; array position is its alignment identity. */
@@ -40,10 +43,6 @@ export type MediaFactInput = {
 
 const RUNTIME_PROMPT_MEDIA_FACTS = Symbol.for("openclaw.runtimePromptMediaFacts");
 
-function normalizeNonNegativeNumber(value: number | null | undefined): number | undefined {
-  return asFiniteNumberInRange(value, { min: 0 });
-}
-
 /** Attaches facts to a runtime prompt message without changing serialized/model-visible bytes. */
 export function attachRuntimePromptMediaFacts<T extends object>(
   message: T,
@@ -68,17 +67,7 @@ export function readRuntimePromptMediaFacts(message: object): MediaFact[] | unde
 
 /** Reads the canonical persisted media envelope without consulting legacy top-level fields. */
 export function readPersistedMediaFacts(message: object): MediaFact[] | undefined {
-  const media = readPersistedMediaFactInputs(message);
-  return media ? normalizeMediaFacts(media) : undefined;
-}
-
-function readPersistedMediaFactInputs(message: object): MediaFactInput[] | undefined {
-  const metadata = (message as Record<string, unknown>)["__openclaw"];
-  const media =
-    metadata && typeof metadata === "object" && !Array.isArray(metadata)
-      ? (metadata as Record<string, unknown>).media
-      : undefined;
-  return Array.isArray(media) ? (media as MediaFactInput[]) : undefined;
+  return readCanonicalPersistedMediaFacts(message);
 }
 
 const LEGACY_MEDIA_CONTEXT_KEYS = [
@@ -122,7 +111,9 @@ export function hasMeaningfulRetiredMediaCarrier(message: object): boolean {
   if (resolveMediaFacts(retired as MediaFactSource).some(isMeaningfulMediaFact)) {
     return true;
   }
-  const canonical = normalizeMediaFacts(readPersistedMediaFactInputs(message));
+  const canonical = normalizeMediaFacts(
+    readPersistedMediaFactInputs(message) as MediaFactInput[] | undefined,
+  );
   if (canonical.length === 0) {
     return false;
   }
@@ -191,7 +182,7 @@ export function canonicalizePersistedUserMessageMedia<T extends object>(
   const record = message as Record<string, unknown>;
   const hadLegacy = PERSISTED_LEGACY_MEDIA_KEYS.some((key) => Object.hasOwn(record, key));
   const hadTopLevelMedia = Object.hasOwn(record, "media");
-  const canonical = readPersistedMediaFactInputs(message);
+  const canonical = readPersistedMediaFactInputs(message) as MediaFactInput[] | undefined;
   if (!hadLegacy && !hadTopLevelMedia && canonical === undefined) {
     return { changed: false, hadLegacy: false, message };
   }
@@ -361,38 +352,6 @@ type MediaFactSource = MediaFactLegacyProjection & {
   MediaWorkspaceDir?: string | null;
 };
 
-function normalizeMediaFact<TInput extends MediaFactInput>(
-  media: TInput,
-  index: number,
-  defaults: MediaFactDefaults<TInput> = {},
-): MediaFact {
-  const workspaceDir = normalizeOptionalString(media.workspaceDir) ?? defaults.workspaceDir;
-  const contentType = normalizeOptionalString(media.contentType);
-  const durationMs = normalizePositiveInteger(media.durationMs);
-  const width = normalizePositiveInteger(media.width);
-  const height = normalizePositiveInteger(media.height);
-  const normalized: MediaFact = {
-    path: normalizeOptionalString(media.path),
-    url: normalizeOptionalString(media.url),
-    contentType,
-    kind:
-      media.kind ??
-      defaults.kind ??
-      (isGenericBinaryMediaContentType(contentType) ? undefined : kindFromMime(contentType)),
-    fileName: normalizeOptionalString(media.fileName),
-    sizeBytes: normalizeNonNegativeNumber(media.sizeBytes),
-    ...(durationMs ? { durationMs } : {}),
-    ...(width ? { width } : {}),
-    ...(height ? { height } : {}),
-    transcribed: media.transcribed === true || defaults.transcribed?.(media, index) === true,
-    messageId: normalizeOptionalString(media.messageId) ?? defaults.messageId,
-    ...(workspaceDir ? { workspaceDir } : {}),
-    ...(media.staged === true ? { staged: true } : {}),
-    ...(media.hydrationSuppressed === true ? { hydrationSuppressed: true } : {}),
-  };
-  return normalized;
-}
-
 /** True when every path-bearing canonical fact has explicit staging proof. */
 export function hasStagedMediaFacts(media: readonly MediaFactInput[] | null | undefined): boolean {
   const stageable = normalizeMediaFacts(media).filter((fact) =>
@@ -410,21 +369,14 @@ export function normalizeMediaFacts<TInput extends MediaFactInput>(
   media: readonly TInput[] | null | undefined,
   defaults: MediaFactDefaults<TInput> = {},
 ): MediaFact[] {
-  return Array.isArray(media)
-    ? media.map((entry, index) => normalizeMediaFact(entry, index, defaults))
-    : [];
+  return normalizePersistedMediaFacts(media, defaults);
 }
 
 // Empty slots exist only to keep legacy parallel-array positions aligned;
 // presence/counting sites must ignore them or blank projections ({MediaPaths: [""]})
 // route media-less messages into inbound-media handling.
 export function isMeaningfulMediaFact(fact: MediaFact): boolean {
-  return Boolean(
-    fact.path?.trim() ||
-    fact.url?.trim() ||
-    fact.contentType ||
-    (fact.kind && fact.kind !== "unknown"),
-  );
+  return isMeaningfulPersistedMediaFact(fact);
 }
 
 function resolveMediaFactsWithPrecedence(
@@ -453,7 +405,7 @@ function resolveMediaFactsWithPrecedence(
       urls[index] ?? (paths.length > 0 || index === 0 ? source.MediaUrl : undefined);
     const legacyContentType =
       normalizeOptionalString(types[index]) ?? (index === 0 ? source.MediaType : undefined);
-    return normalizeMediaFact(
+    return normalizePersistedMediaFact(
       {
         path: legacyProjectionWins
           ? (normalizeOptionalString(legacyPath) ?? fact?.path)
