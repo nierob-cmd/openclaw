@@ -1,7 +1,6 @@
 // Discord message processing coverage split by cohesive behavior.
 import { describe, expect, it } from "vitest";
 import {
-  createAutomaticSourceDeliveryContext,
   createNoQueuedDispatchResult,
   dispatchInboundMessageForTest as dispatchInboundMessage,
   runInPartialStreamMode,
@@ -12,6 +11,7 @@ import type { DispatchInboundParams } from "./message-handler.process.test-harne
 import {
   createBlockModeContext,
   createMockDraftStreamForTest,
+  createProgressDraftSourceDeliveryContext,
   firstDispatchParams,
   useProgressDraftStartDelay,
 } from "./message-handler.process.test-helpers.js";
@@ -46,7 +46,7 @@ async function runReasoningProgressDraft(
     return createNoQueuedDispatchResult();
   });
 
-  const ctx = await createAutomaticSourceDeliveryContext({
+  const ctx = await createProgressDraftSourceDeliveryContext({
     discordConfig: { streaming: { mode: "progress", progress } },
   });
   await runProcessDiscordMessage(ctx);
@@ -68,7 +68,7 @@ describe("processDiscordMessage draft streaming reasoning", () => {
       return createNoQueuedDispatchResult();
     });
 
-    const ctx = await createAutomaticSourceDeliveryContext({
+    const ctx = await createProgressDraftSourceDeliveryContext({
       discordConfig: {
         streaming: {
           mode: "progress",
@@ -104,7 +104,7 @@ describe("processDiscordMessage draft streaming reasoning", () => {
       return createNoQueuedDispatchResult();
     });
 
-    const ctx = await createAutomaticSourceDeliveryContext({
+    const ctx = await createProgressDraftSourceDeliveryContext({
       discordConfig: {
         streaming: {
           mode: "progress",
@@ -140,7 +140,7 @@ describe("processDiscordMessage draft streaming reasoning", () => {
       return createNoQueuedDispatchResult();
     });
 
-    const ctx = await createAutomaticSourceDeliveryContext({
+    const ctx = await createProgressDraftSourceDeliveryContext({
       discordConfig: {
         streaming: {
           mode: "progress",
@@ -291,7 +291,7 @@ describe("processDiscordMessage draft streaming reasoning", () => {
       return createNoQueuedDispatchResult();
     });
 
-    const ctx = await createAutomaticSourceDeliveryContext({
+    const ctx = await createProgressDraftSourceDeliveryContext({
       discordConfig: {
         streaming: {
           mode: "progress",
@@ -313,7 +313,7 @@ describe("processDiscordMessage draft streaming reasoning", () => {
 
     dispatchInboundMessage.mockImplementationOnce(async () => createNoQueuedDispatchResult());
 
-    const ctx = await createAutomaticSourceDeliveryContext({
+    const ctx = await createProgressDraftSourceDeliveryContext({
       discordConfig: {
         streaming: {
           mode: "partial",
@@ -339,7 +339,7 @@ describe("processDiscordMessage draft streaming reasoning", () => {
       return createNoQueuedDispatchResult();
     });
 
-    const ctx = await createAutomaticSourceDeliveryContext({
+    const ctx = await createProgressDraftSourceDeliveryContext({
       discordConfig: { streaming: { mode: "partial" } },
     });
 

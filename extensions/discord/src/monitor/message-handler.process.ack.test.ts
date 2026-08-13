@@ -1,6 +1,7 @@
 // Discord message processing coverage split by cohesive behavior.
 import { expectDefined } from "@openclaw/normalization-core";
 import { DEFAULT_EMOJIS, DEFAULT_TIMING } from "openclaw/plugin-sdk/channel-feedback";
+import { createDeferred } from "openclaw/plugin-sdk/extension-shared";
 import { describe, expect, it, vi } from "vitest";
 import {
   BASE_CHANNEL_ROUTE,
@@ -301,6 +302,7 @@ describe("processDiscordMessage ack reactions", () => {
 
   it("can bind status reactions to an explicitly tracked reaction target", async () => {
     vi.useFakeTimers();
+    const debounceAdvanced = createDeferred<void>();
     dispatchInboundMessage.mockImplementationOnce(async (params?: DispatchInboundParams) => {
       await params?.replyOptions?.onToolStart?.({
         name: "message",
@@ -314,6 +316,7 @@ describe("processDiscordMessage ack reactions", () => {
         },
       });
       await vi.advanceTimersByTimeAsync(DEFAULT_TIMING.debounceMs);
+      debounceAdvanced.resolve();
       return createNoQueuedDispatchResult();
     });
 
@@ -321,8 +324,10 @@ describe("processDiscordMessage ack reactions", () => {
       cfg: { messages: { ackReaction: "👀" } },
     });
 
-    await runProcessDiscordMessage(ctx);
+    const runPromise = runProcessDiscordMessage(ctx);
+    await debounceAdvanced.promise;
     await vi.runAllTimersAsync();
+    await runPromise;
 
     expectReactionCallsContain("c1", "m1", "📈");
     expectReactionCallsContain("c1", "m1", "✉️");
@@ -331,6 +336,7 @@ describe("processDiscordMessage ack reactions", () => {
 
   it("resolves tracked reaction to targets like the Discord reaction action", async () => {
     vi.useFakeTimers();
+    const debounceAdvanced = createDeferred<void>();
     dispatchInboundMessage.mockImplementationOnce(async (params?: DispatchInboundParams) => {
       await params?.replyOptions?.onToolStart?.({
         name: "message",
@@ -344,6 +350,7 @@ describe("processDiscordMessage ack reactions", () => {
         },
       });
       await vi.advanceTimersByTimeAsync(DEFAULT_TIMING.debounceMs);
+      debounceAdvanced.resolve();
       return createNoQueuedDispatchResult();
     });
 
@@ -351,8 +358,10 @@ describe("processDiscordMessage ack reactions", () => {
       cfg: { messages: { ackReaction: "👀" } },
     });
 
-    await runProcessDiscordMessage(ctx);
+    const runPromise = runProcessDiscordMessage(ctx);
+    await debounceAdvanced.promise;
     await vi.runAllTimersAsync();
+    await runPromise;
 
     const resolveCall = firstMockCall(
       discordTargetMocks.resolveDiscordTargetChannelId,

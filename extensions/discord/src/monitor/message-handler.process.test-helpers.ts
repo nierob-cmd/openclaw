@@ -10,6 +10,26 @@ import {
 } from "./message-handler.process.test-harness.js";
 import type { DispatchInboundParams } from "./message-handler.process.test-harness.js";
 
+type AutomaticSourceDeliveryOverrides = Parameters<typeof createAutomaticSourceDeliveryContext>[0];
+
+export async function createProgressDraftSourceDeliveryContext(
+  overrides: AutomaticSourceDeliveryOverrides = {},
+) {
+  const cfg = overrides.cfg ?? {};
+  return await createAutomaticSourceDeliveryContext({
+    ...overrides,
+    cfg: {
+      ...cfg,
+      messages: {
+        ...cfg.messages,
+        // Draft suites own preview timing; reaction holds have separate lifecycle
+        // coverage and must not wait on this fixture's fake clock after dispatch.
+        statusReactions: { ...cfg.messages?.statusReactions, enabled: false },
+      },
+    },
+  });
+}
+
 export function getReactionEmojis(): string[] {
   return (
     sendMocks.reactMessageDiscord.mock.calls as unknown as Array<[unknown, unknown, string]>
@@ -178,7 +198,7 @@ export async function runSingleChunkFinalScenario(discordConfig: Record<string, 
     return { queuedFinal: true, counts: { final: 1, tool: 0, block: 0 } };
   });
 
-  const ctx = await createAutomaticSourceDeliveryContext({
+  const ctx = await createProgressDraftSourceDeliveryContext({
     discordConfig,
   });
 
@@ -188,7 +208,7 @@ export async function runSingleChunkFinalScenario(discordConfig: Record<string, 
 export async function createBlockModeContext(
   discordConfig: Record<string, unknown> = { streaming: { mode: "block" } },
 ) {
-  return await createAutomaticSourceDeliveryContext({
+  return await createProgressDraftSourceDeliveryContext({
     cfg: {
       messages: { ackReaction: "👀" },
       session: { store: "/tmp/openclaw-discord-process-test-sessions.json" },
