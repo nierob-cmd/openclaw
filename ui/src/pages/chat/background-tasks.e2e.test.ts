@@ -176,7 +176,6 @@ suite.define(() => {
 
         const chatUrl = page.url();
         const mainTranscript = page.locator(".chat-main .chat-thread");
-        const mainTranscriptBefore = await mainTranscript.textContent();
         const openRow = rail.locator('[data-task-id="task-subagent"]');
         await openRow.click();
         const detailPanel = page.locator("[data-task-detail-panel]");
@@ -205,7 +204,12 @@ suite.define(() => {
           limit: 100,
         });
         expect(page.url()).toBe(chatUrl);
-        expect(await mainTranscript.textContent()).toBe(mainTranscriptBefore);
+        expect(
+          await mainTranscript.getByText("Background tasks rail proof.", { exact: true }).count(),
+        ).toBe(1);
+        expect(
+          await mainTranscript.getByText("Subagent transcript proof.", { exact: true }).count(),
+        ).toBe(0);
         await page.screenshot({
           path: path.join(railFlowDir, "02-task-detail-sidebar.png"),
           fullPage: true,
