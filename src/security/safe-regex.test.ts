@@ -49,6 +49,23 @@ describe("safe regex", () => {
   });
 
   it.each([
+    ["(a|a)*", "unsafe-ambiguous-alternation"],
+    ["(a|a)+", "unsafe-ambiguous-alternation"],
+    ["(ab|ab)*", "unsafe-ambiguous-alternation"],
+    ["(\\d|\\d)*", "unsafe-ambiguous-alternation"],
+  ] as const)("rejects quantified groups with identical alternatives: %s", (pattern, expected) => {
+    expect(compileSafeRegexDetailed(pattern).reason).toBe(expected);
+    expect(compileSafeRegex(pattern)).toBeNull();
+  });
+
+  it("keeps distinct alternatives and unquantified duplicates compilable", () => {
+    expect(compileSafeRegex("(a|b)*")).toBeInstanceOf(RegExp);
+    expect(compileSafeRegex("(foo|bar)*")).toBeInstanceOf(RegExp);
+    expect(compileSafeRegex("^(foo|bar)$")).toBeInstanceOf(RegExp);
+    expect(compileSafeRegex("(a|a)")).toBeInstanceOf(RegExp);
+  });
+
+  it.each([
     [/^agent:main:discord:/, `agent:main:discord:${"x".repeat(5000)}`, true],
     [/discord:tail$/, `${"x".repeat(5000)}discord:tail`, true],
     [/discord:tail$/, `${"x".repeat(5000)}telegram:tail`, false],
