@@ -268,7 +268,13 @@ function detectUnsafeRepetition(
     if (previousToken.containsRepetition) {
       return "unsafe-nested-repetition";
     }
-    if (previousToken.hasDuplicateAlternatives) {
+    // A group can only repeat with ambiguous (duplicate-alternative) choices when the
+    // quantifier allows it to match more than once; `?`, `{0}`, and `{1}` cannot create the
+    // repeated branching that makes backtracking exponential, so they stay compilable.
+    if (
+      previousToken.hasDuplicateAlternatives &&
+      (quantifier.maxRepeat === null || quantifier.maxRepeat > 1)
+    ) {
       return "unsafe-ambiguous-alternation";
     }
     if (previousToken.hasAmbiguousAlternation && quantifier.maxRepeat === null) {

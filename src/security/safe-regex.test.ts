@@ -65,6 +65,20 @@ describe("safe regex", () => {
     expect(compileSafeRegex("(a|a)")).toBeInstanceOf(RegExp);
   });
 
+  it.each(["corp-(a|a)?([0-9]+)", "(a|a){0}", "(a|a){1}", "(a|a){0,1}"] as const)(
+    "keeps duplicate-alternative groups that can match at most once compilable: %s",
+    (pattern) => {
+      expect(compileSafeRegex(pattern)).toBeInstanceOf(RegExp);
+    },
+  );
+
+  it.each(["(a|a){2}", "(a|a){2,3}", "(a|a){2,}"] as const)(
+    "still rejects duplicate-alternative groups that can match more than once: %s",
+    (pattern) => {
+      expect(compileSafeRegexDetailed(pattern).reason).toBe("unsafe-ambiguous-alternation");
+    },
+  );
+
   it.each([
     [/^agent:main:discord:/, `agent:main:discord:${"x".repeat(5000)}`, true],
     [/discord:tail$/, `${"x".repeat(5000)}discord:tail`, true],
