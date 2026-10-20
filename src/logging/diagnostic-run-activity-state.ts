@@ -184,7 +184,7 @@ export function pruneDiagnosticSessionActivityRefs(now = Date.now(), force = fal
     .filter(([activity]) => !expired.has(activity))
     .toSorted((left, right) => left[0].lastProgressAt - right[0].lastProgressAt);
   let overCap = retained - ACTIVITY_REF_MAX_ACTIVITIES;
-  for (const [activity, refs] of candidates) {
+  for (const [, refs] of candidates) {
     if (overCap <= 0) {
       break;
     }
