@@ -6,6 +6,7 @@ import {
   resolveSessionActivity,
 } from "./diagnostic-run-activity-state.js";
 import {
+  closeDiagnosticEmbeddedRunOwner,
   createDiagnosticEmbeddedRunOwner,
   markDiagnosticEmbeddedRunStarted,
   markDiagnosticRunProgress,
@@ -101,5 +102,57 @@ describe("diagnostic session activity refs", () => {
     pruneDiagnosticSessionActivityRefs(Date.now(), true);
 
     expect(new Set(activityByRef.values()).size).toBeLessThanOrEqual(2_000);
+  });
+
+  it("does not accumulate stale id: aliases for one activity whose sessionKey stays stable across resets", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const startedAt = Date.parse("2026-10-20T00:00:00Z");
+    vi.setSystemTime(startedAt);
+    startDiagnosticRunActivityTracking();
+    const sessionKey = "agent:main:cron:stable-key";
+    // Same sessionKey, a fresh sessionId per reset - the pattern a long-lived Gateway
+    // cron/boot/subagent identity produces on every re-arm.
+    for (let index = 0; index < 500; index++) {
+      vi.setSystemTime(startedAt + index * 1_000);
+      markDiagnosticRunProgress({
+        sessionId: `rotating-id-${index}`,
+        sessionKey,
+        reason: "model_call:stream_progress",
+      });
+    }
+    const refs = [...activityByRef.keys()].filter(
+      (ref) => ref === `key:${sessionKey}` || ref.startsWith("id:rotating-id-"),
+    );
+    // Only the current id: ref (plus the stable key: ref) should remain - not one per reset.
+    expect(refs).toHaveLength(2);
+    expect(activityByRef.has("key:" + sessionKey)).toBe(true);
+    expect(activityByRef.has("id:rotating-id-499")).toBe(true);
+    expect(activityByRef.has("id:rotating-id-0")).toBe(false);
+  });
+
+  it("keeps an activity with a pending recovery cutoff reachable past the idle ttl", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    const startedAt = Date.parse("2026-10-20T00:00:00Z");
+    vi.setSystemTime(startedAt);
+    startDiagnosticRunActivityTracking();
+    const ref = { sessionId: "cutoff-session", sessionKey: "agent:main:cutoff" };
+    // Starting and closing an embedded run owner records a recovery cutoff for its runId,
+    // which protects against a delayed/queued start event for that same run arriving late.
+    for (let index = 0; index < 4; index++) {
+      const runId = `cutoff-run-${index}`;
+      const owner = createDiagnosticEmbeddedRunOwner({ ...ref, runId });
+      markDiagnosticEmbeddedRunStarted({ ...ref, runId, owner });
+      closeDiagnosticEmbeddedRunOwner(owner);
+    }
+    const activity = resolveSessionActivity(ref);
+    expect(activity?.recoveredOwnerStartEventCutoffs.size).toBeGreaterThan(0);
+
+    vi.setSystemTime(startedAt + TTL_MS + 60_000);
+    pruneDiagnosticSessionActivityRefs(Date.now(), true);
+
+    // A pending cutoff means a queued start for this owner can still arrive; releasing the
+    // activity early would let it recreate a phantom activity with no cutoff on replay.
+    expect(activityByRef.has("id:cutoff-session")).toBe(true);
+    expect(activityByRef.has("key:agent:main:cutoff")).toBe(true);
   });
 });

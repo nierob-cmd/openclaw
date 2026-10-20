@@ -92,6 +92,15 @@ const ACTIVITY_REF_MAX_ACTIVITIES = 2000;
 let lastActivityRefPruneAt = 0;
 
 /**
+ * Tracks the most recently registered `id:` ref per activity so a session that keeps a
+ * stable `sessionKey` but mints a fresh `sessionId` on every reset (a long-lived Gateway
+ * cron/boot/subagent identity) does not accumulate an unbounded number of stale `id:`
+ * aliases in `activityByRef` for one activity that stays "live" via continuous refresh and
+ * therefore never ages out through the idle/TTL path.
+ */
+const currentIdRefByActivity = new WeakMap<SessionActivity, string>();
+
+/**
  * True when nothing still points at live work for this activity: no embedded
  * run, tool, model call or core model call, no registered owner, and no run
  * that still tracks it. Only idle activities may be released.
@@ -118,6 +127,12 @@ function isSessionActivityIdle(activity: SessionActivity): boolean {
     if (tracked === activity) {
       return false;
     }
+  }
+  // A pending recovery cutoff means a queued start for this owner can still arrive and
+  // needs to be compared against it; releasing the activity early would let that start
+  // recreate a phantom activity with no cutoff, see diagnostic-run-activity-recovery.ts.
+  if (activity.recoveredOwnerStartEventCutoffs.size > 0) {
+    return false;
   }
   return true;
 }
@@ -201,6 +216,14 @@ function registerSessionActivityRefs(
 ): void {
   activity.sessionId ??= params.sessionId;
   activity.sessionKey ??= params.sessionKey;
+  if (params.sessionId) {
+    const nextIdRef = `id:${params.sessionId}`;
+    const previousIdRef = currentIdRefByActivity.get(activity);
+    if (previousIdRef && previousIdRef !== nextIdRef && activityByRef.get(previousIdRef) === activity) {
+      activityByRef.delete(previousIdRef);
+    }
+    currentIdRefByActivity.set(activity, nextIdRef);
+  }
   for (const ref of sessionRefs(params)) {
     activityByRef.set(ref, activity);
   }
