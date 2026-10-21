@@ -30,6 +30,7 @@ type ParseFrame = {
 
 const SAFE_REGEX_CACHE_MAX = 256;
 const SAFE_REGEX_TEST_WINDOW = 2048;
+const MAX_DUPLICATE_ALTERNATIVE_REPEAT = 8;
 export type SafeRegexRejectReason =
   | "empty"
   | "unsafe-nested-repetition"
@@ -268,12 +269,12 @@ function detectUnsafeRepetition(
     if (previousToken.containsRepetition) {
       return "unsafe-nested-repetition";
     }
-    // A group can only repeat with ambiguous (duplicate-alternative) choices when the
-    // quantifier allows it to match more than once; `?`, `{0}`, and `{1}` cannot create the
-    // repeated branching that makes backtracking exponential, so they stay compilable.
+    // Duplicate-alternative groups only become exponential when the repeat count grows with
+    // the input; a small finite bound (`?`, `{2}`, `{2,3}`) multiplies the branches by a
+    // constant, so those patterns stay compilable and existing custom masks keep working.
     if (
       previousToken.hasDuplicateAlternatives &&
-      (quantifier.maxRepeat === null || quantifier.maxRepeat > 1)
+      (quantifier.maxRepeat === null || quantifier.maxRepeat > MAX_DUPLICATE_ALTERNATIVE_REPEAT)
     ) {
       return "unsafe-ambiguous-alternation";
     }

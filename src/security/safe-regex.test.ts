@@ -65,15 +65,23 @@ describe("safe regex", () => {
     expect(compileSafeRegex("(a|a)")).toBeInstanceOf(RegExp);
   });
 
-  it.each(["corp-(a|a)?([0-9]+)", "(a|a){0}", "(a|a){1}", "(a|a){0,1}"] as const)(
-    "keeps duplicate-alternative groups that can match at most once compilable: %s",
+  it.each([
+    "corp-(a|a)?([0-9]+)",
+    "(a|a){0}",
+    "(a|a){1}",
+    "(a|a){0,1}",
+    "corp-(a|a){2}-[0-9]+",
+    "corp-(a|a){2,3}-[0-9]+",
+    "(a|a){8}",
+  ] as const)(
+    "keeps duplicate-alternative groups with a small finite bound compilable: %s",
     (pattern) => {
       expect(compileSafeRegex(pattern)).toBeInstanceOf(RegExp);
     },
   );
 
-  it.each(["(a|a){2}", "(a|a){2,3}", "(a|a){2,}"] as const)(
-    "still rejects duplicate-alternative groups that can match more than once: %s",
+  it.each(["(a|a){2,}", "(a|a){9}", "(a|a){2,50}"] as const)(
+    "still rejects duplicate-alternative groups with an unbounded or large repeat: %s",
     (pattern) => {
       expect(compileSafeRegexDetailed(pattern).reason).toBe("unsafe-ambiguous-alternation");
     },
