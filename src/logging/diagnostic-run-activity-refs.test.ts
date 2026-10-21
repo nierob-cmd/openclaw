@@ -1,10 +1,6 @@
 // Covers release of retained session activity refs for long-lived Gateways.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  activityByRef,
-  pruneDiagnosticSessionActivityRefs,
-  resolveSessionActivity,
-} from "./diagnostic-run-activity-state.js";
+import { activityByRef, resolveSessionActivity } from "./diagnostic-run-activity-state.js";
 import {
   closeDiagnosticEmbeddedRunOwner,
   createDiagnosticEmbeddedRunOwner,
@@ -15,6 +11,11 @@ import {
 } from "./diagnostic-run-activity.js";
 
 const TTL_MS = 30 * 60 * 1000;
+
+// Reclamation runs inside the production lookup path; a run-only probe never creates state.
+function probeLookup(): void {
+  resolveSessionActivity({ sessionId: "probe-session" });
+}
 
 afterEach(() => {
   vi.useRealTimers();
@@ -35,8 +36,11 @@ describe("diagnostic session activity refs", () => {
     expect(activityByRef.size).toBeGreaterThan(0);
 
     vi.setSystemTime(startedAt + TTL_MS + 60_000);
-    pruneDiagnosticSessionActivityRefs(Date.now(), true);
+    probeLookup();
 
+    // Releasing only one ref would keep the activity reachable through the other.
+    expect(activityByRef.has("id:idle-session")).toBe(false);
+    expect(activityByRef.has("key:agent:main:webchat")).toBe(false);
     expect(activityByRef.size).toBe(0);
   });
 
@@ -55,31 +59,10 @@ describe("diagnostic session activity refs", () => {
     expect(activityByRef.size).toBeGreaterThan(0);
 
     vi.setSystemTime(startedAt + TTL_MS + 60_000);
-    pruneDiagnosticSessionActivityRefs(Date.now(), true);
+    probeLookup();
 
     expect(activityByRef.size).toBeGreaterThan(0);
     expect(resolveSessionActivity({ sessionId: ref.sessionId })).toBeDefined();
-  });
-
-  it("releases both refs of an evicted activity", () => {
-    vi.useFakeTimers({ toFake: ["Date"] });
-    const startedAt = Date.parse("2026-10-20T00:00:00Z");
-    vi.setSystemTime(startedAt);
-    startDiagnosticRunActivityTracking();
-    markDiagnosticRunProgress({
-      sessionId: "paired-session",
-      sessionKey: "agent:main:webchat",
-      reason: "model_call:stream_progress",
-    });
-    expect(activityByRef.has("id:paired-session")).toBe(true);
-    expect(activityByRef.has("key:agent:main:webchat")).toBe(true);
-
-    vi.setSystemTime(startedAt + TTL_MS + 60_000);
-    pruneDiagnosticSessionActivityRefs(Date.now(), true);
-
-    // Releasing only one ref would keep the activity reachable through the other.
-    expect(activityByRef.has("id:paired-session")).toBe(false);
-    expect(activityByRef.has("key:agent:main:webchat")).toBe(false);
   });
 
   it("caps the retained activity set", () => {
@@ -99,7 +82,7 @@ describe("diagnostic session activity refs", () => {
     // An insertion may exceed the cap by one, exactly like the sibling session-state index.
     expect(new Set(activityByRef.values()).size).toBeLessThanOrEqual(2_001);
 
-    pruneDiagnosticSessionActivityRefs(Date.now(), true);
+    probeLookup();
 
     expect(new Set(activityByRef.values()).size).toBeLessThanOrEqual(2_000);
   });
@@ -148,11 +131,57 @@ describe("diagnostic session activity refs", () => {
     expect(activity?.recoveredOwnerStartEventCutoffs.size).toBeGreaterThan(0);
 
     vi.setSystemTime(startedAt + TTL_MS + 60_000);
-    pruneDiagnosticSessionActivityRefs(Date.now(), true);
+    probeLookup();
 
     // A pending cutoff means a queued start for this owner can still arrive; releasing the
     // activity early would let it recreate a phantom activity with no cutoff on replay.
     expect(activityByRef.has("id:cutoff-session")).toBe(true);
     expect(activityByRef.has("key:agent:main:cutoff")).toBe(true);
+  });
+
+  it("keeps the old id: alias until a pending recovery cutoff drains", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse("2026-10-20T00:00:00Z"));
+    startDiagnosticRunActivityTracking();
+    const key = "agent:main:cron:fenced";
+    const first = { sessionId: "old-id", sessionKey: key, runId: "fenced-run" };
+    const owner = createDiagnosticEmbeddedRunOwner(first);
+    markDiagnosticEmbeddedRunStarted({ ...first, owner });
+    closeDiagnosticEmbeddedRunOwner(owner);
+    const activity = resolveSessionActivity({ sessionKey: key });
+    expect(activity?.recoveredOwnerStartEventCutoffs.size).toBeGreaterThan(0);
+
+    markDiagnosticRunProgress({
+      sessionId: "new-id",
+      sessionKey: key,
+      reason: "model_call:stream_progress",
+    });
+
+    // A queued id-only event for the old identity must still resolve to the fenced activity.
+    expect(resolveSessionActivity({ sessionId: "old-id" })).toBe(activity);
+    expect(activityByRef.has("id:new-id")).toBe(true);
+  });
+
+  it("does not rebuild the ref grouping on every lookup when nothing is reclaimable", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.parse("2026-10-20T00:00:00Z"));
+    startDiagnosticRunActivityTracking();
+    // 2_001 live activities, each with an id: and a key: ref, none of them evictable.
+    for (let index = 0; index < 2_001; index++) {
+      const ref = {
+        sessionId: `live-${index}`,
+        sessionKey: `agent:main:live:${index}`,
+        runId: `live-run-${index}`,
+      };
+      markDiagnosticEmbeddedRunStarted({ ...ref, owner: createDiagnosticEmbeddedRunOwner(ref) });
+    }
+    expect(activityByRef.size).toBeGreaterThan(4_000);
+    probeLookup();
+
+    const iterate = vi.spyOn(activityByRef, Symbol.iterator);
+    for (let index = 0; index < 50; index++) {
+      probeLookup();
+    }
+    expect(iterate).not.toHaveBeenCalled();
   });
 });

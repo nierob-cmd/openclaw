@@ -90,6 +90,14 @@ const ACTIVITY_REF_PRUNE_INTERVAL_MS = 60 * 1000;
 const ACTIVITY_REF_MAX_ACTIVITIES = 2000;
 
 let lastActivityRefPruneAt = 0;
+// Ref count right after the last scan; size pressure re-scans early only once new refs
+// were added since, so a full index of live activities is not rebuilt on every lookup.
+let activityRefCountAfterLastPrune = 0;
+
+export function resetDiagnosticSessionActivityPruneState(): void {
+  lastActivityRefPruneAt = 0;
+  activityRefCountAfterLastPrune = 0;
+}
 
 /**
  * Tracks the most recently registered `id:` ref per activity so a session that keeps a
@@ -163,17 +171,22 @@ function collectActivityRefsByActivity(): Map<SessionActivity, string[]> {
  * Both refs of an activity (`id:` and `key:`) are released together; dropping
  * only one would leave the activity reachable through the other.
  */
-export function pruneDiagnosticSessionActivityRefs(now = Date.now(), force = false): void {
-  const shouldPruneForSize = activityByRef.size > ACTIVITY_REF_MAX_ACTIVITIES * 2;
-  if (
-    !force &&
-    !shouldPruneForSize &&
-    now - lastActivityRefPruneAt < ACTIVITY_REF_PRUNE_INTERVAL_MS
-  ) {
+function pruneDiagnosticSessionActivityRefs(now = Date.now()): void {
+  const shouldPruneForSize =
+    activityByRef.size > ACTIVITY_REF_MAX_ACTIVITIES * 2 &&
+    activityByRef.size > activityRefCountAfterLastPrune;
+  if (!shouldPruneForSize && now - lastActivityRefPruneAt < ACTIVITY_REF_PRUNE_INTERVAL_MS) {
     return;
   }
   lastActivityRefPruneAt = now;
+  try {
+    pruneDiagnosticSessionActivityRefsNow(now);
+  } finally {
+    activityRefCountAfterLastPrune = activityByRef.size;
+  }
+}
 
+function pruneDiagnosticSessionActivityRefsNow(now: number): void {
   const refsByActivity = collectActivityRefsByActivity();
   const idle = [...refsByActivity.entries()].filter(([activity]) =>
     isSessionActivityIdle(activity),
@@ -219,7 +232,15 @@ function registerSessionActivityRefs(
   if (params.sessionId) {
     const nextIdRef = `id:${params.sessionId}`;
     const previousIdRef = currentIdRefByActivity.get(activity);
-    if (previousIdRef && previousIdRef !== nextIdRef && activityByRef.get(previousIdRef) === activity) {
+    // Keep the old alias while the activity still has live work or a pending recovery
+    // cutoff: a queued ID-only event must still resolve to the fenced activity. The idle
+    // prune releases the leftover alias together with the rest of the activity.
+    if (
+      previousIdRef &&
+      previousIdRef !== nextIdRef &&
+      activityByRef.get(previousIdRef) === activity &&
+      isSessionActivityIdle(activity)
+    ) {
       activityByRef.delete(previousIdRef);
     }
     currentIdRefByActivity.set(activity, nextIdRef);
